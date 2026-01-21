@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  R2_BUCKET: mithlond-agent
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Get version from release tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build binary
+        run: |
+          go build \
+            -ldflags="-s -w -X main.buildVersion=${{ steps.version.outputs.version }}" \
+            -trimpath \
+            -o mithlond-agent-linux-amd64 \
+            .
+
+      - name: Generate checksum
+        run: |
+          sha256sum mithlond-agent-linux-amd64 | awk '{print $1}' > mithlond-agent-linux-amd64.sha256
+
+      - name: Upload binary to Cloudflare R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: r2 object put ${{ env.R2_BUCKET }}/mithlond-agent/version/${{ steps.version.outputs.version }}/mithlond-agent-linux-amd64 --file=mithlond-agent-linux-amd64
+
+      - name: Upload checksum to Cloudflare R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: r2 object put ${{ env.R2_BUCKET }}/mithlond-agent/version/${{ steps.version.outputs.version }}/mithlond-agent-linux-amd64.sha256 --file=mithlond-agent-linux-amd64.sha256
+
+      - name: Upload latest version pointer
+        run: echo -n "${{ steps.version.outputs.version }}" > latest.txt
+
+      - name: Upload latest.txt to Cloudflare R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: r2 object put ${{ env.R2_BUCKET }}/mithlond-agent/version/latest --file=latest.txt
