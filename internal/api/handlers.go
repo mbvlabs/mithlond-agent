@@ -160,6 +160,10 @@ func agentBinaryPath() string {
 	return path.Join(agentInstallDir(), "mithlond-agent")
 }
 
+func appsBaseDir() string {
+	return "/opt/apps"
+}
+
 func buildArtifactURLs(source, version, fileName string) (string, string, error) {
 	if strings.HasPrefix(source, "s3://") || strings.HasPrefix(source, "r2://") {
 		return buildSignedS3URLs(source, version, fileName)
@@ -478,7 +482,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	logs.WriteString(fmt.Sprintf("Creating binary app %s/%s\n", req.AppSlug, req.Environment))
 
 	// Create app directory
-	appDir := fmt.Sprintf("/opt/%s/%s", req.AppSlug, req.Environment)
+	appDir := path.Join(appsBaseDir(), req.AppSlug, req.Environment)
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to create app directory: %v", err), logs.String())
 		return
@@ -533,7 +537,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		logs.WriteString("Created .env file\n")
 	}
 
-	// Create systemd service
+	// Create systemd service (user unit)
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
 	if err := createSystemdService(serviceName, binaryPath, appDir, req.Port, req.Args); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to create systemd service: %v", err), logs.String())
@@ -542,17 +546,17 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	logs.WriteString(fmt.Sprintf("Created systemd service: %s\n", serviceName))
 
 	// Enable and start service
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to reload systemd: %v", err), logs.String())
 		return
 	}
 
-	if err := exec.Command("systemctl", "enable", serviceName).Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "enable", serviceName).Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to enable service: %v", err), logs.String())
 		return
 	}
 
-	if err := exec.Command("systemctl", "start", serviceName).Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "start", serviceName).Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to start service: %v", err), logs.String())
 		return
 	}
@@ -588,7 +592,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	var logs strings.Builder
 	logs.WriteString(fmt.Sprintf("Deploying binary app %s/%s version %s\n", req.AppSlug, req.Environment, req.ArtifactVersion))
 
-	appDir := fmt.Sprintf("/opt/%s/%s", req.AppSlug, req.Environment)
+	appDir := path.Join(appsBaseDir(), req.AppSlug, req.Environment)
 	if _, err := os.Stat(appDir); os.IsNotExist(err) {
 		writeDeployResponse(w, http.StatusBadRequest, "error", "app does not exist, use create endpoint first", logs.String())
 		return
@@ -630,7 +634,11 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 	// Update systemd service to point to new version
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	servicePath := fmt.Sprintf("/etc/systemd/system/%s.service", serviceName)
+	servicePath, err := systemdServicePath(serviceName)
+	if err != nil {
+		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to resolve systemd path: %v", err), logs.String())
+		return
+	}
 
 	// Read current service file to get port
 	serviceContent, err := os.ReadFile(servicePath)
@@ -657,12 +665,12 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	logs.WriteString("Updated systemd service\n")
 
 	// Reload and restart service
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to reload systemd: %v", err), logs.String())
 		return
 	}
 
-	if err := exec.Command("systemctl", "restart", serviceName).Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "restart", serviceName).Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to restart service: %v", err), logs.String())
 		return
 	}
@@ -690,7 +698,7 @@ func (h *APIHandler) StartApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	output, err := exec.Command("systemctl", "start", serviceName).CombinedOutput()
+	output, err := exec.Command("systemctl", "--user", "start", serviceName).CombinedOutput()
 	if err != nil {
 		writeAppActionResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to start service: %v", err), string(output))
 		return
@@ -708,7 +716,7 @@ func (h *APIHandler) StopApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	output, err := exec.Command("systemctl", "stop", serviceName).CombinedOutput()
+	output, err := exec.Command("systemctl", "--user", "stop", serviceName).CombinedOutput()
 	if err != nil {
 		writeAppActionResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to stop service: %v", err), string(output))
 		return
@@ -726,7 +734,7 @@ func (h *APIHandler) RestartApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	output, err := exec.Command("systemctl", "restart", serviceName).CombinedOutput()
+	output, err := exec.Command("systemctl", "--user", "restart", serviceName).CombinedOutput()
 	if err != nil {
 		writeAppActionResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to restart service: %v", err), string(output))
 		return
@@ -787,6 +795,11 @@ func (h *APIHandler) GetNodeMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func createSystemdService(serviceName, binaryPath, workDir string, port int, args *[]string) error {
+	servicePath, err := systemdServicePath(serviceName)
+	if err != nil {
+		return err
+	}
+
 	var argsStr string
 	if args != nil && len(*args) > 0 {
 		argsStr = " " + strings.Join(*args, " ")
@@ -811,11 +824,24 @@ RestartSec=5
 Environment=PORT=%d
 %s
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 `, serviceName, workDir, binaryPath, argsStr, port, envFileDirective)
 
-	servicePath := fmt.Sprintf("/etc/systemd/system/%s.service", serviceName)
 	return os.WriteFile(servicePath, []byte(serviceContent), 0o644)
+}
+
+func systemdServicePath(serviceName string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve home dir: %w", err)
+	}
+
+	serviceDir := path.Join(homeDir, ".config", "systemd", "user")
+	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create systemd user dir: %w", err)
+	}
+
+	return path.Join(serviceDir, serviceName+".service"), nil
 }
 
 func writeDeployResponse(w http.ResponseWriter, statusCode int, status, message, logs string) {
