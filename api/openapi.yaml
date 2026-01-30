@@ -147,6 +147,24 @@ components:
         artifact_version:
           type: string
 
+    UpdateAgentRequest:
+      type: object
+      required:
+        - artifact_source
+        - artifact_version
+      properties:
+        artifact_source:
+          type: string
+        artifact_version:
+          type: string
+    UpdateAgentResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+
     DeployResponse:
       type: object
       properties:
@@ -192,6 +210,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+
+  /agent/update:
+    post:
+      operationId: updateAgent
+      summary: Update agent binary
+      tags:
+        - Agent
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateAgentResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateAgentResponse"
+        "500":
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateAgentResponse"
 
   /metrics/node:
     get:

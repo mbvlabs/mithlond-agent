@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -28,6 +29,59 @@ func NewAPIHandler(version string) *APIHandler {
 	}
 }
 
+// UpdateAgent implements ServerInterface.
+func (h *APIHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
+	var req UpdateAgentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeUpdateResponse(w, http.StatusBadRequest, "error", fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	if strings.TrimSpace(req.ArtifactSource) == "" || strings.TrimSpace(req.ArtifactVersion) == "" {
+		writeUpdateResponse(w, http.StatusBadRequest, "error", "artifact_source and artifact_version are required")
+		return
+	}
+
+	binaryName := agentBinaryName()
+	tempPath := fmt.Sprintf("/tmp/mithlond-agent.%s", req.ArtifactVersion)
+
+	binaryURL, checksumURL, err := buildArtifactURLs(req.ArtifactSource, req.ArtifactVersion, binaryName)
+	if err != nil {
+		writeUpdateResponse(w, http.StatusBadRequest, "error", err.Error())
+		return
+	}
+
+	if err := downloadToFile(r.Context(), binaryURL, tempPath); err != nil {
+		writeUpdateResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to download binary: %v", err))
+		return
+	}
+
+	checksumBytes, err := fetchBytes(r.Context(), checksumURL)
+	if err != nil {
+		_ = os.Remove(tempPath)
+		writeUpdateResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to download checksum: %v", err))
+		return
+	}
+
+	if err := verifyChecksum(tempPath, string(checksumBytes)); err != nil {
+		_ = os.Remove(tempPath)
+		writeUpdateResponse(w, http.StatusBadRequest, "error", fmt.Sprintf("checksum verification failed: %v", err))
+		return
+	}
+
+	if err := os.Chmod(tempPath, 0o755); err != nil {
+		writeUpdateResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to chmod binary: %v", err))
+		return
+	}
+
+	if err := installAgentBinary(tempPath); err != nil {
+		writeUpdateResponse(w, http.StatusInternalServerError, "error", err.Error())
+		return
+	}
+
+	writeUpdateResponse(w, http.StatusOK, "restarting", "agent will restart with new version")
+}
+
 // GetHealth implements ServerInterface.
 func (h *APIHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	resp := HealthResponse{
@@ -37,6 +91,10 @@ func (h *APIHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func agentBinaryName() string {
+	return fmt.Sprintf("mithlond-agent-%s-%s", runtime.GOOS, runtime.GOARCH)
 }
 
 func buildArtifactURLs(source, version, fileName string) (string, string, error) {
@@ -194,6 +252,41 @@ func verifyChecksum(filePath string, expectedChecksum string) error {
 	}
 
 	return nil
+}
+
+func installAgentBinary(binaryPath string) error {
+	currentBinary := "/opt/mithlond-agent/mithlond-agent"
+	backupBinary := "/opt/mithlond-agent/mithlond-agent.backup"
+
+	if err := os.Rename(currentBinary, backupBinary); err != nil {
+		return fmt.Errorf("failed to backup current binary: %w", err)
+	}
+
+	if err := os.Rename(binaryPath, currentBinary); err != nil {
+		_ = os.Rename(backupBinary, currentBinary)
+		return fmt.Errorf("failed to install new binary: %w", err)
+	}
+
+	if err := os.Chmod(currentBinary, 0o755); err != nil {
+		return fmt.Errorf("failed to set permissions: %w", err)
+	}
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		_ = exec.Command("systemctl", "restart", "mithlond-agent").Run()
+	}()
+
+	return nil
+}
+
+func writeUpdateResponse(w http.ResponseWriter, statusCode int, status string, message string) {
+	resp := UpdateAgentResponse{
+		Status:  &status,
+		Message: &message,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func presignS3Get(endpoint, region, accessKey, secretKey, bucket, key string, ttl time.Duration) (string, error) {
