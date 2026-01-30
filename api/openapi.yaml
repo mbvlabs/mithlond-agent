@@ -23,8 +23,11 @@ components:
       type: object
       required:
         - app_slug
+        - environment
       properties:
         app_slug:
+          type: string
+        environment:
           type: string
     AppActionResponse:
       type: object
@@ -40,18 +43,20 @@ components:
       type: object
       required:
         - app_slug
-        - service_name
+        - environment
         - artifact_source
         - artifact_version
         - port
       properties:
         app_slug:
           type: string
-        service_name:
+        environment:
           type: string
         artifact_source:
           type: string
         artifact_version:
+          type: string
+        domain:
           type: string
         env_vars:
           type: object
@@ -70,10 +75,13 @@ components:
       type: object
       required:
         - app_slug
+        - environment
         - artifact_source
         - artifact_version
       properties:
         app_slug:
+          type: string
+        environment:
           type: string
         artifact_source:
           type: string
@@ -88,15 +96,20 @@ components:
       type: object
       required:
         - app_slug
+        - environment
         - artifact_source
         - artifact_version
         - port
       properties:
         app_slug:
           type: string
+        environment:
+          type: string
         artifact_source:
           type: string
         artifact_version:
+          type: string
+        domain:
           type: string
         env_vars:
           type: object
@@ -121,32 +134,17 @@ components:
       type: object
       required:
         - app_slug
+        - environment
         - artifact_source
         - artifact_version
       properties:
         app_slug:
           type: string
+        environment:
+          type: string
         artifact_source:
           type: string
         artifact_version:
-          type: string
-
-    UpdateAgentRequest:
-      type: object
-      required:
-        - artifact_source
-        - artifact_version
-      properties:
-        artifact_source:
-          type: string
-        artifact_version:
-          type: string
-    UpdateAgentResponse:
-      type: object
-      properties:
-        status:
-          type: string
-        message:
           type: string
 
     DeployResponse:
@@ -194,40 +192,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
-
-  /agent/update:
-    post:
-      operationId: updateAgent
-      summary: Update agent binary
-      tags:
-        - Agent
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateAgentRequest"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UpdateAgentResponse"
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UpdateAgentResponse"
-        "500":
-          description: Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UpdateAgentResponse"
 
   /metrics/node:
     get:

@@ -22,7 +22,8 @@ const (
 
 // AppActionRequest defines model for AppActionRequest.
 type AppActionRequest struct {
-	AppSlug string `json:"app_slug"`
+	AppSlug     string `json:"app_slug"`
+	Environment string `json:"environment"`
 }
 
 // AppActionResponse defines model for AppActionResponse.
@@ -38,10 +39,11 @@ type CreateBinaryAppRequest struct {
 	Args            *[]string          `json:"args,omitempty"`
 	ArtifactSource  string             `json:"artifact_source"`
 	ArtifactVersion string             `json:"artifact_version"`
+	Domain          *string            `json:"domain,omitempty"`
 	EnvVars         *map[string]string `json:"env_vars,omitempty"`
+	Environment     string             `json:"environment"`
 	HealthcheckUrl  *string            `json:"healthcheck_url,omitempty"`
 	Port            int                `json:"port"`
-	ServiceName     string             `json:"service_name"`
 }
 
 // CreateDockerAppRequest defines model for CreateDockerAppRequest.
@@ -50,7 +52,9 @@ type CreateDockerAppRequest struct {
 	ArtifactSource  string             `json:"artifact_source"`
 	ArtifactVersion string             `json:"artifact_version"`
 	DockerCommand   *[]string          `json:"docker_command,omitempty"`
+	Domain          *string            `json:"domain,omitempty"`
 	EnvVars         *map[string]string `json:"env_vars,omitempty"`
+	Environment     string             `json:"environment"`
 	Port            int                `json:"port"`
 	Ports           *[]string          `json:"ports,omitempty"`
 	Volumes         *[]string          `json:"volumes,omitempty"`
@@ -62,6 +66,7 @@ type DeployBinaryAppRequest struct {
 	Args            *[]string `json:"args,omitempty"`
 	ArtifactSource  string    `json:"artifact_source"`
 	ArtifactVersion string    `json:"artifact_version"`
+	Environment     string    `json:"environment"`
 }
 
 // DeployDockerAppRequest defines model for DeployDockerAppRequest.
@@ -69,6 +74,7 @@ type DeployDockerAppRequest struct {
 	AppSlug         string `json:"app_slug"`
 	ArtifactSource  string `json:"artifact_source"`
 	ArtifactVersion string `json:"artifact_version"`
+	Environment     string `json:"environment"`
 }
 
 // DeployResponse defines model for DeployResponse.
@@ -89,21 +95,6 @@ type HealthResponse struct {
 
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
-
-// UpdateAgentRequest defines model for UpdateAgentRequest.
-type UpdateAgentRequest struct {
-	ArtifactSource  string `json:"artifact_source"`
-	ArtifactVersion string `json:"artifact_version"`
-}
-
-// UpdateAgentResponse defines model for UpdateAgentResponse.
-type UpdateAgentResponse struct {
-	Message *string `json:"message,omitempty"`
-	Status  *string `json:"status,omitempty"`
-}
-
-// UpdateAgentJSONRequestBody defines body for UpdateAgent for application/json ContentType.
-type UpdateAgentJSONRequestBody = UpdateAgentRequest
 
 // CreateBinaryAppJSONRequestBody defines body for CreateBinaryApp for application/json ContentType.
 type CreateBinaryAppJSONRequestBody = CreateBinaryAppRequest
@@ -128,9 +119,6 @@ type StopAppJSONRequestBody = AppActionRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Update agent binary
-	// (POST /agent/update)
-	UpdateAgent(w http.ResponseWriter, r *http.Request)
 	// Create binary app (install and start)
 	// (POST /app/create/binary)
 	CreateBinaryApp(w http.ResponseWriter, r *http.Request)
@@ -168,26 +156,6 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
-
-// UpdateAgent operation middleware
-func (siw *ServerInterfaceWrapper) UpdateAgent(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyAuthScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdateAgent(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
 
 // CreateBinaryApp operation middleware
 func (siw *ServerInterfaceWrapper) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
@@ -489,7 +457,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc("POST "+options.BaseURL+"/agent/update", wrapper.UpdateAgent)
 	m.HandleFunc("POST "+options.BaseURL+"/app/create/binary", wrapper.CreateBinaryApp)
 	m.HandleFunc("POST "+options.BaseURL+"/app/create/docker", wrapper.CreateDockerApp)
 	m.HandleFunc("POST "+options.BaseURL+"/app/deploy/binary", wrapper.DeployBinaryApp)
