@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -52,7 +53,27 @@ func (h *APIHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	binaryName := agentBinaryName()
-	tempPath := fmt.Sprintf("/tmp/mithlond-agent.%s", req.ArtifactVersion)
+	tempFile, err := os.CreateTemp(agentInstallDir(), "mithlond-agent.*.tmp")
+	if err != nil {
+		writeUpdateResponse(
+			w,
+			http.StatusInternalServerError,
+			"error",
+			fmt.Sprintf("failed to create temp file: %v", err),
+		)
+		return
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		writeUpdateResponse(
+			w,
+			http.StatusInternalServerError,
+			"error",
+			fmt.Sprintf("failed to close temp file: %v", err),
+		)
+		return
+	}
 
 	binaryURL, checksumURL, err := buildArtifactURLs(
 		req.ArtifactSource,
@@ -65,6 +86,7 @@ func (h *APIHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := downloadToFile(r.Context(), binaryURL, tempPath); err != nil {
+		_ = os.Remove(tempPath)
 		writeUpdateResponse(
 			w,
 			http.StatusInternalServerError,
@@ -130,20 +152,21 @@ func agentBinaryName() string {
 	return "mithlond-agent-linux-amd64"
 }
 
+func agentInstallDir() string {
+	return "/opt/mithlond-agent"
+}
+
+func agentBinaryPath() string {
+	return path.Join(agentInstallDir(), "mithlond-agent")
+}
+
 func buildArtifactURLs(source, version, fileName string) (string, string, error) {
 	if strings.HasPrefix(source, "s3://") || strings.HasPrefix(source, "r2://") {
 		return buildSignedS3URLs(source, version, fileName)
 	}
 
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		sourceWithVersion := strings.ReplaceAll(source, "{version}", version)
-		if strings.Contains(sourceWithVersion, "{file}") {
-			binaryURL := strings.ReplaceAll(sourceWithVersion, "{file}", fileName)
-			checksumURL := strings.ReplaceAll(sourceWithVersion, "{file}", fileName+".sha256")
-			return binaryURL, checksumURL, nil
-		}
-
-		binaryURL, err := url.JoinPath(sourceWithVersion, fileName)
+		binaryURL, err := url.JoinPath(source, version, fileName)
 		if err != nil {
 			return "", "", err
 		}
@@ -308,25 +331,48 @@ func verifyChecksum(filePath string, expectedChecksum string) error {
 }
 
 func installAgentBinary(binaryPath string) error {
-	currentBinary := "/opt/mithlond-agent/mithlond-agent"
-	backupBinary := "/opt/mithlond-agent/mithlond-agent.backup"
+	currentBinary, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to resolve current binary: %w", err)
+	}
+	backupBinary := currentBinary + ".backup"
 
-	if err := os.Rename(currentBinary, backupBinary); err != nil {
-		return fmt.Errorf("failed to backup current binary: %w", err)
+	if _, err := os.Stat(currentBinary); err == nil {
+		if err := os.Rename(currentBinary, backupBinary); err != nil {
+			return fmt.Errorf("failed to backup current binary: %w", err)
+		}
 	}
 
-	if err := os.Rename(binaryPath, currentBinary); err != nil {
+	source, err := os.Open(binaryPath)
+	if err != nil {
 		_ = os.Rename(backupBinary, currentBinary)
-		return fmt.Errorf("failed to install new binary: %w", err)
+		return fmt.Errorf("failed to open new binary: %w", err)
+	}
+	defer source.Close()
+
+	dest, err := os.OpenFile(currentBinary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		_ = os.Rename(backupBinary, currentBinary)
+		return fmt.Errorf("failed to open install target: %w", err)
 	}
 
-	if err := os.Chmod(currentBinary, 0o755); err != nil {
-		return fmt.Errorf("failed to set permissions: %w", err)
+	if _, err := io.Copy(dest, source); err != nil {
+		_ = dest.Close()
+		_ = os.Rename(backupBinary, currentBinary)
+		return fmt.Errorf("failed to write new binary: %w", err)
 	}
+
+	if err := dest.Close(); err != nil {
+		_ = os.Rename(backupBinary, currentBinary)
+		return fmt.Errorf("failed to close new binary: %w", err)
+	}
+
+	_ = os.Remove(binaryPath)
+	_ = os.Remove(backupBinary)
 
 	go func() {
 		time.Sleep(1 * time.Second)
-		_ = exec.Command("systemctl", "restart", "mithlond-agent").Run()
+		_ = syscall.Exec(currentBinary, os.Args, os.Environ())
 	}()
 
 	return nil
