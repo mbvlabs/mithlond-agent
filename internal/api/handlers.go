@@ -564,7 +564,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 	// Download binary
 	binaryPath := path.Join(appDir, req.ArtifactVersion)
-	binaryURL, checksumURL, err := buildArtifactURLs(
+	binaryURL, _, err := buildArtifactURLs(
 		req.ArtifactSource,
 		req.ArtifactVersion,
 		// TODO: NOT CORRECT - we need the binary name
