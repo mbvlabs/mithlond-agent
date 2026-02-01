@@ -161,7 +161,33 @@ func agentBinaryPath() string {
 }
 
 func appsBaseDir() string {
-	return "/opt/apps"
+	return "/opt/mithlond/apps"
+}
+
+func appsConfigDir() string {
+	return "/etc/mithlond/apps"
+}
+
+// sudoRun executes a command with sudo privileges.
+func sudoRun(name string, args ...string) *exec.Cmd {
+	sudoArgs := append([]string{name}, args...)
+	return exec.Command("sudo", sudoArgs...)
+}
+
+// sudoMkdirAll creates directories using sudo mkdir -p.
+func sudoMkdirAll(path string) error {
+	return sudoRun("mkdir", "-p", path).Run()
+}
+
+// sudoWriteFile writes content to a file using sudo tee.
+func sudoWriteFile(path string, content []byte, mode os.FileMode) error {
+	cmd := sudoRun("tee", path)
+	cmd.Stdin = strings.NewReader(string(content))
+	cmd.Stdout = nil // suppress tee's stdout
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return sudoRun("chmod", fmt.Sprintf("%o", mode), path).Run()
 }
 
 func buildArtifactURLs(source, version, fileName string) (string, string, error) {
@@ -481,13 +507,21 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	var logs strings.Builder
 	logs.WriteString(fmt.Sprintf("Creating binary app %s/%s\n", req.AppSlug, req.Environment))
 
-	// Create app directory
+	// Create app directory (under /opt/mithlond/apps - group-writable, no sudo needed)
 	appDir := path.Join(appsBaseDir(), req.AppSlug, req.Environment)
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to create app directory: %v", err), logs.String())
 		return
 	}
 	logs.WriteString(fmt.Sprintf("Created directory: %s\n", appDir))
+
+	// Create config directory (under /etc/mithlond/apps - requires sudo)
+	configDir := path.Join(appsConfigDir(), req.AppSlug, req.Environment)
+	if err := sudoMkdirAll(configDir); err != nil {
+		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to create config directory: %v", err), logs.String())
+		return
+	}
+	logs.WriteString(fmt.Sprintf("Created config directory: %s\n", configDir))
 
 	// Download binary
 	binaryPath := path.Join(appDir, req.ArtifactVersion)
@@ -523,40 +557,40 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write .env file
+	// Write env file to config directory (requires sudo)
 	if req.EnvVars != nil && len(*req.EnvVars) > 0 {
-		envPath := path.Join(appDir, ".env")
+		envPath := path.Join(configDir, "env")
 		var envContent strings.Builder
 		for key, value := range *req.EnvVars {
 			envContent.WriteString(fmt.Sprintf("%s=%s\n", key, value))
 		}
-		if err := os.WriteFile(envPath, []byte(envContent.String()), 0o644); err != nil {
-			writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to write .env file: %v", err), logs.String())
+		if err := sudoWriteFile(envPath, []byte(envContent.String()), 0o640); err != nil {
+			writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to write env file: %v", err), logs.String())
 			return
 		}
-		logs.WriteString("Created .env file\n")
+		logs.WriteString(fmt.Sprintf("Created env file: %s\n", envPath))
 	}
 
-	// Create systemd service (user unit)
+	// Create systemd service (system unit, requires sudo)
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	if err := createSystemdService(serviceName, binaryPath, appDir, req.Port, req.Args); err != nil {
+	if err := createSystemdService(serviceName, binaryPath, appDir, configDir, req.Port, req.Args); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to create systemd service: %v", err), logs.String())
 		return
 	}
 	logs.WriteString(fmt.Sprintf("Created systemd service: %s\n", serviceName))
 
-	// Enable and start service
-	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+	// Enable and start service (requires sudo for system units)
+	if err := sudoRun("systemctl", "daemon-reload").Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to reload systemd: %v", err), logs.String())
 		return
 	}
 
-	if err := exec.Command("systemctl", "--user", "enable", serviceName).Run(); err != nil {
+	if err := sudoRun("systemctl", "enable", serviceName).Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to enable service: %v", err), logs.String())
 		return
 	}
 
-	if err := exec.Command("systemctl", "--user", "start", serviceName).Run(); err != nil {
+	if err := sudoRun("systemctl", "start", serviceName).Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to start service: %v", err), logs.String())
 		return
 	}
@@ -634,11 +668,8 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 	// Update systemd service to point to new version
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	servicePath, err := systemdServicePath(serviceName)
-	if err != nil {
-		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to resolve systemd path: %v", err), logs.String())
-		return
-	}
+	servicePath := systemdServicePath(serviceName)
+	configDir := path.Join(appsConfigDir(), req.AppSlug, req.Environment)
 
 	// Read current service file to get port
 	serviceContent, err := os.ReadFile(servicePath)
@@ -658,19 +689,19 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := createSystemdService(serviceName, binaryPath, appDir, port, req.Args); err != nil {
+	if err := createSystemdService(serviceName, binaryPath, appDir, configDir, port, req.Args); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to update systemd service: %v", err), logs.String())
 		return
 	}
 	logs.WriteString("Updated systemd service\n")
 
-	// Reload and restart service
-	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+	// Reload and restart service (requires sudo for system units)
+	if err := sudoRun("systemctl", "daemon-reload").Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to reload systemd: %v", err), logs.String())
 		return
 	}
 
-	if err := exec.Command("systemctl", "--user", "restart", serviceName).Run(); err != nil {
+	if err := sudoRun("systemctl", "restart", serviceName).Run(); err != nil {
 		writeDeployResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to restart service: %v", err), logs.String())
 		return
 	}
@@ -698,7 +729,7 @@ func (h *APIHandler) StartApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	output, err := exec.Command("systemctl", "--user", "start", serviceName).CombinedOutput()
+	output, err := sudoRun("systemctl", "start", serviceName).CombinedOutput()
 	if err != nil {
 		writeAppActionResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to start service: %v", err), string(output))
 		return
@@ -716,7 +747,7 @@ func (h *APIHandler) StopApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	output, err := exec.Command("systemctl", "--user", "stop", serviceName).CombinedOutput()
+	output, err := sudoRun("systemctl", "stop", serviceName).CombinedOutput()
 	if err != nil {
 		writeAppActionResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to stop service: %v", err), string(output))
 		return
@@ -734,7 +765,7 @@ func (h *APIHandler) RestartApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
-	output, err := exec.Command("systemctl", "--user", "restart", serviceName).CombinedOutput()
+	output, err := sudoRun("systemctl", "restart", serviceName).CombinedOutput()
 	if err != nil {
 		writeAppActionResponse(w, http.StatusInternalServerError, "error", fmt.Sprintf("failed to restart service: %v", err), string(output))
 		return
@@ -794,18 +825,15 @@ func (h *APIHandler) GetNodeMetrics(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-func createSystemdService(serviceName, binaryPath, workDir string, port int, args *[]string) error {
-	servicePath, err := systemdServicePath(serviceName)
-	if err != nil {
-		return err
-	}
+func createSystemdService(serviceName, binaryPath, workDir, configDir string, port int, args *[]string) error {
+	servicePath := systemdServicePath(serviceName)
 
 	var argsStr string
 	if args != nil && len(*args) > 0 {
 		argsStr = " " + strings.Join(*args, " ")
 	}
 
-	envFile := path.Join(workDir, ".env")
+	envFile := path.Join(configDir, "env")
 	envFileDirective := ""
 	if _, err := os.Stat(envFile); err == nil {
 		envFileDirective = fmt.Sprintf("EnvironmentFile=%s\n", envFile)
@@ -824,24 +852,14 @@ RestartSec=5
 Environment=PORT=%d
 %s
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 `, serviceName, workDir, binaryPath, argsStr, port, envFileDirective)
 
-	return os.WriteFile(servicePath, []byte(serviceContent), 0o644)
+	return sudoWriteFile(servicePath, []byte(serviceContent), 0o644)
 }
 
-func systemdServicePath(serviceName string) (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve home dir: %w", err)
-	}
-
-	serviceDir := path.Join(homeDir, ".config", "systemd", "user")
-	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
-		return "", fmt.Errorf("failed to create systemd user dir: %w", err)
-	}
-
-	return path.Join(serviceDir, serviceName+".service"), nil
+func systemdServicePath(serviceName string) string {
+	return path.Join("/etc/systemd/system", serviceName+".service")
 }
 
 func writeDeployResponse(w http.ResponseWriter, statusCode int, status, message, logs string) {
