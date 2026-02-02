@@ -525,6 +525,16 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create callback emitter if callback_url is provided
+	var callbackURL, deploymentID string
+	if req.CallbackUrl != nil {
+		callbackURL = *req.CallbackUrl
+	}
+	if req.DeploymentId != nil {
+		deploymentID = *req.DeploymentId
+	}
+	emitter := NewCallbackEmitter(callbackURL, deploymentID)
+
 	var logs strings.Builder
 	fmt.Fprintf(&logs, "Creating binary app %s/%s\n", req.AppSlug, req.Environment)
 
@@ -535,6 +545,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		strings.ToLower(req.Environment),
 	)
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		emitter.EmitFailed(r.Context(), "setup", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -553,6 +564,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		strings.ToLower(req.Environment),
 	)
 	if err := sudoMkdirAll(configDir); err != nil {
+		emitter.EmitFailed(r.Context(), "setup", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -572,6 +584,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		req.ArtifactName,
 	)
 	if err != nil {
+		emitter.EmitFailed(r.Context(), "download", err)
 		writeDeployResponse(
 			w,
 			http.StatusBadRequest,
@@ -582,8 +595,10 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	emitter.EmitStart(r.Context(), "download", "Starting binary download")
 	fmt.Fprintf(&logs, "Downloading binary from %s\n", req.ArtifactSource)
 	if err := downloadToFile(r.Context(), binaryURL, binaryPath); err != nil {
+		emitter.EmitFailed(r.Context(), "download", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -593,6 +608,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	emitter.EmitDone(r.Context(), "download", "Binary downloaded successfully")
 	logs.WriteString("Binary downloaded successfully\n")
 
 	// // Verify checksum
@@ -610,6 +626,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 	// Make binary executable
 	if err := os.Chmod(binaryPath, 0o755); err != nil {
+		emitter.EmitFailed(r.Context(), "setup", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -620,6 +637,8 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	emitter.EmitStart(r.Context(), "switch", "Configuring service")
+
 	// Write env file to config directory (requires sudo)
 	if req.EnvVars != nil && len(*req.EnvVars) > 0 {
 		envPath := path.Join(configDir, "env")
@@ -628,6 +647,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&envContent, "%s=%s\n", key, value)
 		}
 		if err := sudoWriteFile(envPath, []byte(envContent.String()), 0o640); err != nil {
+			emitter.EmitFailed(r.Context(), "switch", err)
 			writeDeployResponse(
 				w,
 				http.StatusInternalServerError,
@@ -643,6 +663,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	// Create systemd service (system unit, requires sudo)
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
 	if err := createSystemdService(serviceName, binaryPath, appDir, configDir, req.Port, req.Args); err != nil {
+		emitter.EmitFailed(r.Context(), "switch", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -653,9 +674,12 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprintf(&logs, "Created systemd service: %s\n", serviceName)
+	emitter.EmitDone(r.Context(), "switch", "Service configured")
 
 	// Enable and start service (requires sudo for system units)
+	emitter.EmitStart(r.Context(), "restart", "Starting service")
 	if err := sudoRun("systemctl", "daemon-reload").Run(); err != nil {
+		emitter.EmitFailed(r.Context(), "restart", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -667,6 +691,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := sudoRun("systemctl", "enable", serviceName).Run(); err != nil {
+		emitter.EmitFailed(r.Context(), "restart", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -678,6 +703,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := sudoRun("systemctl", "start", serviceName).Run(); err != nil {
+		emitter.EmitFailed(r.Context(), "restart", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -687,6 +713,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	emitter.EmitDone(r.Context(), "restart", "Service started")
 	logs.WriteString("Service enabled and started\n")
 
 	// Configure Caddy route if domain is specified
@@ -699,6 +726,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	emitter.EmitCompleted(r.Context(), "Binary app created successfully")
 	logs.WriteString("Binary app created successfully\n")
 	writeDeployResponse(w, http.StatusOK, "success", "app created and started", logs.String())
 }
@@ -728,6 +756,16 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create callback emitter if callback_url is provided
+	var callbackURL, deploymentID string
+	if req.CallbackUrl != nil {
+		callbackURL = *req.CallbackUrl
+	}
+	if req.DeploymentId != nil {
+		deploymentID = *req.DeploymentId
+	}
+	emitter := NewCallbackEmitter(callbackURL, deploymentID)
+
 	var logs strings.Builder
 	fmt.Fprintf(&logs, "Deploying binary app %s/%s version %s\n",
 		req.AppSlug,
@@ -736,6 +774,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 	appDir := path.Join(appsBaseDir(), req.AppSlug, req.Environment)
 	if _, err := os.Stat(appDir); os.IsNotExist(err) {
+		emitter.EmitFailed(r.Context(), "download", fmt.Errorf("app does not exist"))
 		writeDeployResponse(
 			w,
 			http.StatusBadRequest,
@@ -751,9 +790,10 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	binaryURL, _, err := buildArtifactURLs(
 		req.ArtifactSource,
 		req.ArtifactVersion,
-		req.AppSlug,
+		req.ArtifactName,
 	)
 	if err != nil {
+		emitter.EmitFailed(r.Context(), "download", err)
 		writeDeployResponse(
 			w,
 			http.StatusBadRequest,
@@ -766,8 +806,10 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("Downloading new binary", "url", binaryURL, "path", binaryPath)
 
+	emitter.EmitStart(r.Context(), "download", "Starting binary download")
 	fmt.Fprintf(&logs, "Downloading binary version %s\n", req.ArtifactVersion)
 	if err := downloadToFile(r.Context(), binaryURL, binaryPath); err != nil {
+		emitter.EmitFailed(r.Context(), "download", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -777,6 +819,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	emitter.EmitDone(r.Context(), "download", "Binary downloaded successfully")
 	logs.WriteString("Binary downloaded successfully\n")
 
 	// // Verify checksum
@@ -794,6 +837,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 	// Make binary executable
 	if err := os.Chmod(binaryPath, 0o755); err != nil {
+		emitter.EmitFailed(r.Context(), "switch", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -804,6 +848,8 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	emitter.EmitStart(r.Context(), "switch", "Updating systemd service")
+
 	// Update systemd service to point to new version
 	serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.Environment)
 	servicePath := systemdServicePath(serviceName)
@@ -812,6 +858,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	// Read current service file to get port
 	serviceContent, err := os.ReadFile(servicePath)
 	if err != nil {
+		emitter.EmitFailed(r.Context(), "switch", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -834,6 +881,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := createSystemdService(serviceName, binaryPath, appDir, configDir, port, req.Args); err != nil {
+		emitter.EmitFailed(r.Context(), "switch", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -843,10 +891,13 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	emitter.EmitDone(r.Context(), "switch", "Systemd service updated")
 	logs.WriteString("Updated systemd service\n")
 
 	// Reload and restart service (requires sudo for system units)
+	emitter.EmitStart(r.Context(), "restart", "Restarting service")
 	if err := sudoRun("systemctl", "daemon-reload").Run(); err != nil {
+		emitter.EmitFailed(r.Context(), "restart", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -858,6 +909,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := sudoRun("systemctl", "restart", serviceName).Run(); err != nil {
+		emitter.EmitFailed(r.Context(), "restart", err)
 		writeDeployResponse(
 			w,
 			http.StatusInternalServerError,
@@ -867,8 +919,10 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	emitter.EmitDone(r.Context(), "restart", "Service restarted")
 	logs.WriteString("Service restarted with new version\n")
 
+	emitter.EmitCompleted(r.Context(), fmt.Sprintf("Deployed version %s successfully", req.ArtifactVersion))
 	writeDeployResponse(
 		w,
 		http.StatusOK,

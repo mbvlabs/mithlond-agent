@@ -49,6 +49,8 @@ components:
         - artifact_name
         - port
       properties:
+        deployment_id:
+          type: string
         app_slug:
           type: string
         environment:
@@ -59,6 +61,9 @@ components:
           type: string
         artifact_name:
           type: string
+        callback_url:
+          type: string
+          format: uri
         domain:
           type: string
         env_vars:
@@ -83,6 +88,8 @@ components:
         - artifact_version
         - artifact_name
       properties:
+        deployment_id:
+          type: string
         app_slug:
           type: string
         environment:
@@ -93,6 +100,9 @@ components:
           type: string
         artifact_name:
           type: string
+        callback_url:
+          type: string
+          format: uri
         args:
           type: array
           items:
@@ -107,6 +117,8 @@ components:
         - artifact_version
         - port
       properties:
+        deployment_id:
+          type: string
         app_slug:
           type: string
         environment:
@@ -115,6 +127,9 @@ components:
           type: string
         artifact_version:
           type: string
+        callback_url:
+          type: string
+          format: uri
         domain:
           type: string
         env_vars:
@@ -144,6 +159,8 @@ components:
         - artifact_source
         - artifact_version
       properties:
+        deployment_id:
+          type: string
         app_slug:
           type: string
         environment:
@@ -152,6 +169,9 @@ components:
           type: string
         artifact_version:
           type: string
+        callback_url:
+          type: string
+          format: uri
 
     UpdateAgentRequest:
       type: object
