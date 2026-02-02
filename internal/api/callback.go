@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -33,12 +32,10 @@ type CallbackEmitter struct {
 
 // NewCallbackEmitter creates a new CallbackEmitter.
 // Returns nil if callbackURL is empty.
-// The API key is read from MITHLOND_API_KEY environment variable.
-func NewCallbackEmitter(callbackURL, deploymentID string) *CallbackEmitter {
+func NewCallbackEmitter(callbackURL, deploymentID, apiKey string) *CallbackEmitter {
 	if callbackURL == "" {
 		return nil
 	}
-	apiKey := os.Getenv("MITHLOND_API_KEY")
 	return &CallbackEmitter{
 		callbackURL:  callbackURL,
 		deploymentID: deploymentID,

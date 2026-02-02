@@ -22,11 +22,13 @@ import (
 
 type APIHandler struct {
 	version string
+	apiKey  string
 }
 
-func NewAPIHandler(version string) *APIHandler {
+func NewAPIHandler(version, apiKey string) *APIHandler {
 	return &APIHandler{
 		version: version,
+		apiKey:  apiKey,
 	}
 }
 
@@ -533,7 +535,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	if req.DeploymentId != nil {
 		deploymentID = *req.DeploymentId
 	}
-	emitter := NewCallbackEmitter(callbackURL, deploymentID)
+	emitter := NewCallbackEmitter(callbackURL, deploymentID, h.apiKey)
 
 	var logs strings.Builder
 	fmt.Fprintf(&logs, "Creating binary app %s/%s\n", req.AppSlug, req.Environment)
@@ -764,7 +766,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	if req.DeploymentId != nil {
 		deploymentID = *req.DeploymentId
 	}
-	emitter := NewCallbackEmitter(callbackURL, deploymentID)
+	emitter := NewCallbackEmitter(callbackURL, deploymentID, h.apiKey)
 
 	var logs strings.Builder
 	fmt.Fprintf(&logs, "Deploying binary app %s/%s version %s\n",
