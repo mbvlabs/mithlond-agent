@@ -16,48 +16,44 @@ import (
 )
 
 var CreateBinaryAppRequestSchema = z.Struct(z.Shape{
-	"teamSlug": z.String().
-		Required(z.Message("Team Slug must be provided")).
-		Min(3).
-		Max(50, z.Message("Team Slug must be between 3 and 50 characters")),
+	"teamId": z.String().
+		Required(z.Message("Team ID must be provided")).
+		UUID(z.Message("Team ID must be a valid UUID v4")),
 	"deploymentId": z.String().
 		Required(z.Message("DeploymentID must be provided")).
-		Max(100, z.Message("DeploymentID must be between 1 and 100 characters")),
+		UUID(z.Message("Deployment ID must be a valid UUID v4")),
 	"appId": z.String().
 		Required(z.Message("App ID must be provided")).
-		Min(3).
-		Max(100, z.Message("App ID must be between 3 and 100 characters")),
-	"appSlug": z.String().
-		Required(z.Message("App Slug must be provided")).
-		Min(3).
-		Max(50, z.Message("App Slug must be between 3 and 50 characters")),
+		UUID(z.Message("App ID must be a valid UUID v4")),
 	"artifactName": z.String().
 		Required(z.Message("Artifact name must be provided")).
-		Min(1).
+		Min(1, z.Message("Artifact name must be at least 1 character")).
 		Max(200, z.Message("Artifact name must be between 1 and 200 characters")),
 	"artifactSource": z.String().
 		Required(z.Message("Artifact source must be provided")).
-		Min(1).
+		Min(1, z.Message("Artifact source must be at least 1 character")).
 		Max(2000, z.Message("Artifact source must be between 1 and 2000 characters")),
 	"artifactVersion": z.String().
 		Required(z.Message("Artifact version must be provided")).
-		Min(1).
+		Min(1, z.Message("Artifact version must be at least 1 character")).
 		Max(100, z.Message("Artifact version must be between 1 and 100 characters")),
 	"environmentName": z.String().
 		Required(z.Message("Environment name must be provided")).
-		Min(1).
+		Min(1, z.Message("Environment name must be at least 1 character")).
 		Max(100, z.Message("Environment name must be between 1 and 100 characters")),
 	"callbackUrl": z.String().
-		Required(z.Message("CallbackURL must be provided")).
+		Required(z.Message("Callback URL must be provided")).
 		URL().
-		Max(2000, z.Message("CallbackURL must be between 1 and 2000 characters")),
+		Max(2000, z.Message("Callback URL must be between 1 and 2000 characters")),
 	"domain": z.String().
 		Optional().
+		Min(1, z.Message("Domain must be at least 1 character")).
 		Max(253, z.Message("Domain must be between 1 and 253 characters")),
-	"port": z.Int().Required(z.Message("Port must be provided")).
+	"port": z.Int().
+		Required(z.Message("Port must be provided")).
 		GT(0).
 		LT(65536).
-		Not().OneOf([]int{80, 443, 9640}, z.Message("Ports: 80, 443, 9640 is reserved")),
+		Not().OneOf([]int{80, 443, 9640}, z.Message("Ports 80, 443, and 9640 are reserved")),
 })
 
 const (
@@ -116,7 +112,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 			Action:     CreateBinaryAppAction,
 			Scope:      "action",
 			Status:     "in_progress",
-			Message:    fmt.Sprintf("Starting deployment for %s/%s", req.AppSlug, req.EnvironmentName),
+			Message:    fmt.Sprintf("Starting deployment for /%s", req.EnvironmentName),
 		}); err != nil {
 			slog.Error("failed to emit deployment event", "error", err)
 			return
@@ -128,17 +124,20 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 			Step:       "create_app_directory",
 			Scope:      "step",
 			Status:     "in_progress",
-			Message:    fmt.Sprintf("Creating binary app %s/%s", req.AppSlug, req.EnvironmentName),
+			Message:    fmt.Sprintf("Creating binary app %s", req.EnvironmentName),
 		}); err != nil {
 			slog.Error("failed to emit deployment event", "error", err)
 			return
 		}
 
-		// Create app directory (under /opt/mithlond/apps - group-writable, no sudo needed)
-		// e.g., /opt/mithlond/apps/team_slug-team_id/environment
+		// Create app directory (under /opt/mithlond/tenants - group-writable, no sudo needed)
+		// e.g., /opt/mithlond/tenants/<team-slug>/apps/<app-id>/envs/<environment>
 		appDir := path.Join(
 			appsBaseDir(),
-			strings.ToLower(req.TeamSlug)+"-"+strings.ToLower(req.AppId),
+			strings.ToLower(req.TeamId),
+			"apps",
+			strings.ToLower(req.AppId),
+			"envs",
 			strings.ToLower(req.EnvironmentName),
 		)
 		if err := os.MkdirAll(appDir, 0o755); err != nil {
@@ -180,10 +179,13 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// e.g., /etc/mithlond/apps/team_slug-team_id/environment
+		// e.g., /etc/mithlond/tenants/<team-slug>/apps/<app-id>/envs/<environment>
 		configDir := path.Join(
 			appsConfigDir(),
-			strings.ToLower(req.TeamSlug)+"-"+strings.ToLower(req.AppId),
+			strings.ToLower(req.TeamId),
+			"apps",
+			strings.ToLower(req.AppId),
+			"envs",
 			strings.ToLower(req.EnvironmentName),
 		)
 		if err := sudoMkdirAll(configDir); err != nil {
@@ -377,7 +379,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 
 		// Create systemd service (system unit, requires sudo)
 		serviceName := strings.ToLower(
-			fmt.Sprintf("%s--%s--%s", req.TeamSlug, req.AppSlug, req.EnvironmentName),
+			fmt.Sprintf("%s__%s__%s", req.TeamId, req.AppId, req.EnvironmentName),
 		)
 		if err := createSystemdService(serviceName, binaryPath, appDir, configDir, req.Port, nil); err != nil {
 			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{

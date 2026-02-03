@@ -36,11 +36,11 @@ func NewAPIHandler(version, apiKey string) *APIHandler {
 // }
 
 func appsBaseDir() string {
-	return "/opt/mithlond/apps"
+	return "/opt/mithlond/tenants"
 }
 
 func appsConfigDir() string {
-	return "/etc/mithlond/apps"
+	return "/etc/mithlond/tenants"
 }
 
 // sudoRun executes a command with sudo privileges.

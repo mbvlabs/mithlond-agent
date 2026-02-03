@@ -36,7 +36,6 @@ type AppActionResponse struct {
 // CreateBinaryAppRequest defines model for CreateBinaryAppRequest.
 type CreateBinaryAppRequest struct {
 	AppId           string             `json:"app_id"`
-	AppSlug         string             `json:"app_slug"`
 	ArtifactName    string             `json:"artifact_name"`
 	ArtifactSource  string             `json:"artifact_source"`
 	ArtifactVersion string             `json:"artifact_version"`
@@ -45,9 +44,8 @@ type CreateBinaryAppRequest struct {
 	Domain          string             `json:"domain"`
 	EnvVars         *map[string]string `json:"env_vars,omitempty"`
 	EnvironmentName string             `json:"environment_name"`
-	HealthcheckUrl  *string            `json:"healthcheck_url,omitempty"`
 	Port            int                `json:"port"`
-	TeamSlug        string             `json:"team_slug"`
+	TeamId          string             `json:"team_id"`
 }
 
 // CreateDockerAppRequest defines model for CreateDockerAppRequest.
