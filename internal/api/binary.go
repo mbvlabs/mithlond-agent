@@ -67,9 +67,9 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if validationErrors := CreateBinaryAppRequestSchema.Validate(&req); validationErrors != nil {
 		// handle errors -> see Errors section
-		validationErrorMessages := make([]string, 0, len(validationErrors))
-		for i, ve := range validationErrors {
-			validationErrorMessages[i] = ve.Message
+		var validationErrorMessages []string
+		for _, ve := range validationErrors {
+			validationErrorMessages = append(validationErrorMessages, ve.Message)
 		}
 
 		writeDeployResponse(
