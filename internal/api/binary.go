@@ -57,10 +57,7 @@ var CreateBinaryAppRequestSchema = z.Struct(z.Shape{
 	"port": z.Int().Required(z.Message("Port must be provided")).
 		GT(0).
 		LT(65536).
-		EQ(9640, z.Message("Port '9640' is reserved.")).
-		EQ(443, z.Message("Port '443' is reserved.")).
-		EQ(80, z.Message("Port '80' is reserved.")).
-		EQ(9999, z.Message("Port '9999' is reserved.")), // replace with ssh port
+		OneOf([]int{80, 443, 9640}, z.Message("Ports: 80, 443, 9640 is reserved")),
 })
 
 const (
