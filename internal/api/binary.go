@@ -26,7 +26,7 @@ var CreateBinaryAppRequestSchema = z.Struct(z.Shape{
 	"appId": z.String().
 		Required(z.Message("App ID must be provided")).
 		Min(3).
-		Max(50, z.Message("App ID must be between 3 and 50 characters")),
+		Max(100, z.Message("App ID must be between 3 and 100 characters")),
 	"appSlug": z.String().
 		Required(z.Message("App Slug must be provided")).
 		Min(3).
