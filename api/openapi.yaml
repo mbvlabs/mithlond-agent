@@ -2,9 +2,16 @@ openapi: 3.0.0
 info:
   title: Mithlond Agent API
   version: 0.1.0
+  license:
+    name: O'Sassy
+    url: https://osaasy.dev/
   description: |
     Server agent API for handling deployments, updates, and health checks.
     This agent is installed on servers/VPS instances and communicates with the Mithlond platform.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
 
 components:
   securitySchemes:
@@ -236,6 +243,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateAgentResponse"
 
   /agent/update:
     post:
@@ -286,6 +299,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GenericObject"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateAgentResponse"
         "503":
           description: Prometheus not available
           content:

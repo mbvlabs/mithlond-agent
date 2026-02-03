@@ -376,7 +376,9 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create systemd service (system unit, requires sudo)
-		serviceName := fmt.Sprintf("%s-%s", req.AppSlug, req.EnvironmentName)
+		serviceName := strings.ToLower(
+			fmt.Sprintf("%s--%s--%s", req.TeamSlug, req.AppSlug, req.EnvironmentName),
+		)
 		if err := createSystemdService(serviceName, binaryPath, appDir, configDir, req.Port, nil); err != nil {
 			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
 				Scope:      "step",
