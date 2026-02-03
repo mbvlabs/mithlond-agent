@@ -46,9 +46,8 @@ components:
       type: object
       required:
         - app_id
-        - app_slug
         - deployment_id
-        - team_slug
+        - team_id
         - environment_name
         - artifact_source
         - artifact_name
@@ -59,11 +58,9 @@ components:
       properties:
         app_id:
           type: string
-        app_slug:
-          type: string
         deployment_id:
           type: string
-        team_slug:
+        team_id:
           type: string
         environment_name:
           type: string
@@ -84,8 +81,6 @@ components:
             type: string
         port:
           type: integer
-        healthcheck_url:
-          type: string
 
     DeployBinaryAppRequest:
       type: object
