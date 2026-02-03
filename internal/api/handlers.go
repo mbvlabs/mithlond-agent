@@ -32,6 +32,8 @@ func NewAPIHandler(version, apiKey string) *APIHandler {
 	}
 }
 
+const agentArtifactSource = ""
+
 // UpdateAgent implements ServerInterface.
 func (h *APIHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	var req UpdateAgentRequest
@@ -45,7 +47,7 @@ func (h *APIHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.ArtifactSource) == "" || strings.TrimSpace(req.ArtifactVersion) == "" {
+	if strings.TrimSpace(req.ArtifactVersion) == "" {
 		writeUpdateResponse(
 			w,
 			http.StatusBadRequest,
@@ -55,89 +57,103 @@ func (h *APIHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	go func() {
+		writeUpdateResponse(w, http.StatusAccepted, "update_initiated", "agent update initiated")
+	}()
+
 	binaryName := agentBinaryName()
 	tempFile, err := os.CreateTemp(agentInstallDir(), "mithlond-agent.*.tmp")
 	if err != nil {
-		writeUpdateResponse(
-			w,
-			http.StatusInternalServerError,
-			"error",
-			fmt.Sprintf("failed to create temp file: %v", err),
-		)
+		// writeUpdateResponse(
+		// 	w,
+		// 	http.StatusInternalServerError,
+		// 	"error",
+		// 	fmt.Sprintf("failed to create temp file: %v", err),
+		// )
+		slog.Error("failed to create temp file", "error", err)
 		return
 	}
+
 	tempPath := tempFile.Name()
 	if err := tempFile.Close(); err != nil {
 		_ = os.Remove(tempPath)
-		writeUpdateResponse(
-			w,
-			http.StatusInternalServerError,
-			"error",
-			fmt.Sprintf("failed to close temp file: %v", err),
-		)
+		// writeUpdateResponse(
+		// 	w,
+		// 	http.StatusInternalServerError,
+		// 	"error",
+		// 	fmt.Sprintf("failed to close temp file: %v", err),
+		// )
+		slog.Error("failed to close temp file", "error", err)
 		return
 	}
 
 	binaryURL, checksumURL, err := buildArtifactURLs(
-		req.ArtifactSource,
+		agentArtifactSource,
 		req.ArtifactVersion,
 		binaryName,
 	)
 	if err != nil {
-		writeUpdateResponse(w, http.StatusBadRequest, "error", err.Error())
+		// writeUpdateResponse(w, http.StatusBadRequest, "error", err.Error())
+		slog.Error("failed to build artifact URLs", "error", err)
 		return
 	}
 
 	if err := downloadToFile(r.Context(), binaryURL, tempPath); err != nil {
 		_ = os.Remove(tempPath)
-		writeUpdateResponse(
-			w,
-			http.StatusInternalServerError,
-			"error",
-			fmt.Sprintf("failed to download binary: %v", err),
-		)
+		// writeUpdateResponse(
+		// 	w,
+		// 	http.StatusInternalServerError,
+		// 	"error",
+		// 	fmt.Sprintf("failed to download binary: %v", err),
+		// )
+		slog.Error("failed to download binary", "error", err)
 		return
 	}
 
 	checksumBytes, err := fetchBytes(r.Context(), checksumURL)
 	if err != nil {
 		_ = os.Remove(tempPath)
-		writeUpdateResponse(
-			w,
-			http.StatusInternalServerError,
-			"error",
-			fmt.Sprintf("failed to download checksum: %v", err),
-		)
+		// writeUpdateResponse(
+		// 	w,
+		// 	http.StatusInternalServerError,
+		// 	"error",
+		// 	fmt.Sprintf("failed to download checksum: %v", err),
+		// )
+		slog.Error("failed to download checksum", "error", err)
 		return
 	}
 
 	if err := verifyChecksum(tempPath, string(checksumBytes)); err != nil {
 		_ = os.Remove(tempPath)
-		writeUpdateResponse(
-			w,
-			http.StatusBadRequest,
-			"error",
-			fmt.Sprintf("checksum verification failed: %v", err),
-		)
+		// writeUpdateResponse(
+		// 	w,
+		// 	http.StatusBadRequest,
+		// 	"error",
+		// 	fmt.Sprintf("checksum verification failed: %v", err),
+		// )
+		slog.Error("checksum verification failed", "error", err)
 		return
 	}
 
 	if err := os.Chmod(tempPath, 0o755); err != nil {
-		writeUpdateResponse(
-			w,
-			http.StatusInternalServerError,
-			"error",
-			fmt.Sprintf("failed to chmod binary: %v", err),
-		)
+		// writeUpdateResponse(
+		// 	w,
+		// 	http.StatusInternalServerError,
+		// 	"error",
+		// 	fmt.Sprintf("failed to chmod binary: %v", err),
+		// )
+		slog.Error("failed to chmod binary", "error", err)
 		return
 	}
 
 	if err := installAgentBinary(tempPath); err != nil {
-		writeUpdateResponse(w, http.StatusInternalServerError, "error", err.Error())
+		// writeUpdateResponse(w, http.StatusInternalServerError, "error", err.Error())
+		slog.Error("failed to install new agent binary", "error", err)
 		return
 	}
 
-	writeUpdateResponse(w, http.StatusOK, "restarting", "agent will restart with new version")
+	// writeUpdateResponse(w, http.StatusOK, "restarting", "agent will restart with new version")
+	slog.Info("agent update successful, restarting to new version")
 }
 
 // GetHealth implements ServerInterface.
@@ -535,6 +551,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	if req.DeploymentId != nil {
 		deploymentID = *req.DeploymentId
 	}
+
 	emitter := NewCallbackEmitter(callbackURL, deploymentID, h.apiKey)
 
 	var logs strings.Builder
@@ -924,7 +941,10 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	emitter.EmitDone(r.Context(), "restart", "Service restarted")
 	logs.WriteString("Service restarted with new version\n")
 
-	emitter.EmitCompleted(r.Context(), fmt.Sprintf("Deployed version %s successfully", req.ArtifactVersion))
+	emitter.EmitCompleted(
+		r.Context(),
+		fmt.Sprintf("Deployed version %s successfully", req.ArtifactVersion),
+	)
 	writeDeployResponse(
 		w,
 		http.StatusOK,

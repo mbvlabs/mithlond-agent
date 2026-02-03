@@ -108,7 +108,6 @@ type HealthResponseStatus string
 
 // UpdateAgentRequest defines model for UpdateAgentRequest.
 type UpdateAgentRequest struct {
-	ArtifactSource  string `json:"artifact_source"`
 	ArtifactVersion string `json:"artifact_version"`
 }
 
