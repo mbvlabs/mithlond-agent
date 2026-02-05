@@ -244,6 +244,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 			appDir,
 			internalBinaryName(req.EnvironmentId),
 		)
+		backupBinaryPath := fmt.Sprintf("%s.bak", binaryPath)
 		binaryURL := req.AssetUrl
 		// binaryURL, _, err := buildArtifactURLs(
 		// 	req.ArtifactSource,
@@ -277,7 +278,42 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if _, err := os.Stat(binaryPath); err == nil {
+			_ = os.Remove(backupBinaryPath)
+			if err := os.Rename(binaryPath, backupBinaryPath); err != nil {
+				if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
+					Scope:      "step",
+					GroupingID: groupingID,
+					Action:     CreateBinaryAppAction,
+					Step:       "switch",
+					Status:     "failed",
+					Message:    "Failed to backup existing binary",
+					Error:      fmt.Sprintf("failed to backup binary: %v", err),
+				}); err != nil {
+					slog.Error("failed to emit deployment event", "error", err)
+				}
+				return
+			}
+		} else if !os.IsNotExist(err) {
+			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
+				Scope:      "step",
+				GroupingID: groupingID,
+				Action:     CreateBinaryAppAction,
+				Step:       "switch",
+				Status:     "failed",
+				Message:    "Failed to check existing binary",
+				Error:      fmt.Sprintf("failed to stat binary: %v", err),
+			}); err != nil {
+				slog.Error("failed to emit deployment event", "error", err)
+			}
+			return
+		}
+
 		if err := downloadToFile(ctx, binaryURL, binaryPath); err != nil {
+			_ = os.Remove(binaryPath)
+			if _, restoreErr := os.Stat(backupBinaryPath); restoreErr == nil {
+				_ = os.Rename(backupBinaryPath, binaryPath)
+			}
 			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
 				Scope:      "step",
 				GroupingID: groupingID,
@@ -286,6 +322,26 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 				Status:     "failed",
 				Message:    "Failed to download binary",
 				Error:      fmt.Sprintf("failed to download binary: %v", err),
+			}); err != nil {
+				slog.Error("failed to emit deployment event", "error", err)
+			}
+			return
+		}
+
+		// Make binary executable
+		if err := os.Chmod(binaryPath, 0o755); err != nil {
+			_ = os.Remove(binaryPath)
+			if _, restoreErr := os.Stat(backupBinaryPath); restoreErr == nil {
+				_ = os.Rename(backupBinaryPath, binaryPath)
+			}
+			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
+				Scope:      "step",
+				GroupingID: groupingID,
+				Action:     CreateBinaryAppAction,
+				Step:       "switch",
+				Status:     "failed",
+				Message:    "Failed to chmod binary",
+				Error:      fmt.Sprintf("failed to chmod binary: %v", err),
 			}); err != nil {
 				slog.Error("failed to emit deployment event", "error", err)
 			}
@@ -304,32 +360,20 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Make binary executable
-		if err := os.Chmod(binaryPath, 0o755); err != nil {
-			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
-				Scope:      "step",
-				GroupingID: groupingID,
-				Action:     CreateBinaryAppAction,
-				Step:       "switch",
-				Status:     "failed",
-				Message:    "Failed to chmod binary",
-				Error:      fmt.Sprintf("failed to chmod binary: %v", err),
-			}); err != nil {
-				slog.Error("failed to emit deployment event", "error", err)
-			}
-			return
-		}
-
 		if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
 			Scope:      "step",
 			GroupingID: groupingID,
 			Action:     CreateBinaryAppAction,
 			Step:       "switch",
 			Status:     "completed",
-			Message:    "Binary chmodded successfully",
+			Message:    "Binary switched successfully",
 		}); err != nil {
 			slog.Error("failed to emit deployment event", "error", err)
 			return
+		}
+
+		if err := os.Remove(backupBinaryPath); err != nil && !os.IsNotExist(err) {
+			slog.Error("failed to remove backup binary", "error", err, "path", backupBinaryPath)
 		}
 
 		if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
@@ -689,6 +733,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		}
 
 		binaryPath := path.Join(appDir, internalBinaryName(req.EnvironmentId))
+		backupBinaryPath := fmt.Sprintf("%s.bak", binaryPath)
 		binaryURL := req.AssetUrl
 		// binaryURL, _, err := buildArtifactURLs(
 		// 	req.ArtifactSource,
@@ -722,7 +767,42 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if _, err := os.Stat(binaryPath); err == nil {
+			_ = os.Remove(backupBinaryPath)
+			if err := os.Rename(binaryPath, backupBinaryPath); err != nil {
+				if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
+					Scope:      "step",
+					GroupingID: groupingID,
+					Action:     DeployBinaryAppAction,
+					Step:       "switch",
+					Status:     "failed",
+					Message:    "Failed to backup existing binary",
+					Error:      fmt.Sprintf("failed to backup binary: %v", err),
+				}); err != nil {
+					slog.Error("failed to emit deployment event", "error", err)
+				}
+				return
+			}
+		} else if !os.IsNotExist(err) {
+			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
+				Scope:      "step",
+				GroupingID: groupingID,
+				Action:     DeployBinaryAppAction,
+				Step:       "switch",
+				Status:     "failed",
+				Message:    "Failed to check existing binary",
+				Error:      fmt.Sprintf("failed to stat binary: %v", err),
+			}); err != nil {
+				slog.Error("failed to emit deployment event", "error", err)
+			}
+			return
+		}
+
 		if err := downloadToFile(ctx, binaryURL, binaryPath); err != nil {
+			_ = os.Remove(binaryPath)
+			if _, restoreErr := os.Stat(backupBinaryPath); restoreErr == nil {
+				_ = os.Rename(backupBinaryPath, binaryPath)
+			}
 			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
 				Scope:      "step",
 				GroupingID: groupingID,
@@ -731,6 +811,25 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 				Status:     "failed",
 				Message:    "Failed to download binary",
 				Error:      fmt.Sprintf("failed to download binary: %v", err),
+			}); err != nil {
+				slog.Error("failed to emit deployment event", "error", err)
+			}
+			return
+		}
+
+		if err := os.Chmod(binaryPath, 0o755); err != nil {
+			_ = os.Remove(binaryPath)
+			if _, restoreErr := os.Stat(backupBinaryPath); restoreErr == nil {
+				_ = os.Rename(backupBinaryPath, binaryPath)
+			}
+			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
+				Scope:      "step",
+				GroupingID: groupingID,
+				Action:     DeployBinaryAppAction,
+				Step:       "switch",
+				Status:     "failed",
+				Message:    "Failed to chmod binary",
+				Error:      fmt.Sprintf("failed to chmod binary: %v", err),
 			}); err != nil {
 				slog.Error("failed to emit deployment event", "error", err)
 			}
@@ -749,21 +848,6 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := os.Chmod(binaryPath, 0o755); err != nil {
-			if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
-				Scope:      "step",
-				GroupingID: groupingID,
-				Action:     DeployBinaryAppAction,
-				Step:       "switch",
-				Status:     "failed",
-				Message:    "Failed to chmod binary",
-				Error:      fmt.Sprintf("failed to chmod binary: %v", err),
-			}); err != nil {
-				slog.Error("failed to emit deployment event", "error", err)
-			}
-			return
-		}
-
 		if err := emitter.EmitDeploymentEvent(ctx, DeploymentEvent{
 			Scope:      "step",
 			GroupingID: groupingID,
@@ -774,6 +858,10 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			slog.Error("failed to emit deployment event", "error", err)
 			return
+		}
+
+		if err := os.Remove(backupBinaryPath); err != nil && !os.IsNotExist(err) {
+			slog.Error("failed to remove backup binary", "error", err, "path", backupBinaryPath)
 		}
 
 		serviceName := strings.ToLower(
