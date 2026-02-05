@@ -24,7 +24,7 @@ var CreateBinaryAppRequestSchema = z.Struct(z.Shape{
 		Required(z.Message("DeploymentID must be provided")).
 		UUID(z.Message("Deployment ID must be a valid UUID v4")),
 	"assetUrl": z.String().
-		Required(z.Message("Asse turl must be provided")).
+		Required(z.Message("Asset url must be provided")).
 		URL().
 		Max(2000, z.Message("Asset URL must be between 1 and 2000 characters")),
 	"appId": z.String().
@@ -85,7 +85,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		// handle errors -> see Errors section
 		var validationErrorMessages []string
 		for _, ve := range validationErrors {
-			validationErrorMessages = append(validationErrorMessages, ve.Message)
+			validationErrorMessages = append(validationErrorMessages, ve.Error())
 		}
 
 		writeDeployResponse(
@@ -570,10 +570,12 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	if validationErrors := DeployBinaryAppRequestSchema.Validate(&req); validationErrors != nil {
+
+	if validationErrors := CreateBinaryAppRequestSchema.Validate(&req); validationErrors != nil {
+		// handle errors -> see Errors section
 		var validationErrorMessages []string
 		for _, ve := range validationErrors {
-			validationErrorMessages = append(validationErrorMessages, ve.Message)
+			validationErrorMessages = append(validationErrorMessages, ve.Error())
 		}
 
 		writeDeployResponse(

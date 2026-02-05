@@ -72,6 +72,7 @@ type DeployBinaryAppRequest struct {
 	ArtifactName    string             `json:"artifact_name"`
 	ArtifactSource  string             `json:"artifact_source"`
 	ArtifactVersion string             `json:"artifact_version"`
+	AssetUrl        string             `json:"asset_url"`
 	CallbackUrl     string             `json:"callback_url"`
 	DeploymentId    string             `json:"deployment_id"`
 	Domain          string             `json:"domain"`
