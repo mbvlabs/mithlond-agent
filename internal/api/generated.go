@@ -39,11 +39,12 @@ type CreateBinaryAppRequest struct {
 	ArtifactName    string             `json:"artifact_name"`
 	ArtifactSource  string             `json:"artifact_source"`
 	ArtifactVersion string             `json:"artifact_version"`
+	AssetUrl        string             `json:"asset_url"`
 	CallbackUrl     string             `json:"callback_url"`
 	DeploymentId    string             `json:"deployment_id"`
 	Domain          string             `json:"domain"`
 	EnvVars         *map[string]string `json:"env_vars,omitempty"`
-	EnvironmentName string             `json:"environment_name"`
+	EnvironmentId   string             `json:"environment_id"`
 	Port            int                `json:"port"`
 	TeamId          string             `json:"team_id"`
 }
@@ -66,14 +67,19 @@ type CreateDockerAppRequest struct {
 
 // DeployBinaryAppRequest defines model for DeployBinaryAppRequest.
 type DeployBinaryAppRequest struct {
-	AppSlug         string    `json:"app_slug"`
-	Args            *[]string `json:"args,omitempty"`
-	ArtifactName    string    `json:"artifact_name"`
-	ArtifactSource  string    `json:"artifact_source"`
-	ArtifactVersion string    `json:"artifact_version"`
-	CallbackUrl     *string   `json:"callback_url,omitempty"`
-	DeploymentId    *string   `json:"deployment_id,omitempty"`
-	Environment     string    `json:"environment"`
+	AppId           string             `json:"app_id"`
+	Args            *[]string          `json:"args,omitempty"`
+	ArtifactName    string             `json:"artifact_name"`
+	ArtifactSource  string             `json:"artifact_source"`
+	ArtifactVersion string             `json:"artifact_version"`
+	AssetUrl        string             `json:"asset_url"`
+	CallbackUrl     string             `json:"callback_url"`
+	DeploymentId    string             `json:"deployment_id"`
+	Domain          string             `json:"domain"`
+	EnvVars         *map[string]string `json:"env_vars,omitempty"`
+	EnvironmentId   string             `json:"environment_id"`
+	Port            int                `json:"port"`
+	TeamId          string             `json:"team_id"`
 }
 
 // DeployDockerAppRequest defines model for DeployDockerAppRequest.
