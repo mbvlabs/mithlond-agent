@@ -67,6 +67,11 @@ const (
 
 var DeployBinaryAppRequestSchema = CreateBinaryAppRequestSchema
 
+func internalBinaryName(environmentID string) string {
+	environmentParts := strings.Split(environmentID, "-")
+	return fmt.Sprintf("%s-%s-app", environmentParts[0], environmentParts[1])
+}
+
 // CreateBinaryApp implements ServerInterface.
 func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	var req CreateBinaryAppRequest
@@ -237,7 +242,7 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 		// Download binary
 		binaryPath := path.Join(
 			appDir,
-			req.ArtifactName,
+			internalBinaryName(req.EnvironmentId),
 		)
 		binaryURL := req.AssetUrl
 		// binaryURL, _, err := buildArtifactURLs(
@@ -557,6 +562,11 @@ func (h *APIHandler) CreateBinaryApp(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// TODOs:
+// 1. rollbacks
+// 2. updating port
+// 3. update env variables
+
 // DeployBinaryApp implements ServerInterface.
 func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 	var req DeployBinaryAppRequest
@@ -678,7 +688,7 @@ func (h *APIHandler) DeployBinaryApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		binaryPath := path.Join(appDir, req.ArtifactName)
+		binaryPath := path.Join(appDir, internalBinaryName(req.EnvironmentId))
 		binaryURL := req.AssetUrl
 		// binaryURL, _, err := buildArtifactURLs(
 		// 	req.ArtifactSource,
