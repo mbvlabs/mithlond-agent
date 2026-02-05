@@ -91,7 +91,7 @@ components:
         - team_id
         - deployment_id
         - app_id
-        - environment_name
+        - environment_id
         - artifact_source
         - artifact_version
         - artifact_name
@@ -105,7 +105,7 @@ components:
           type: string
         app_id:
           type: string
-        environment_name:
+        environment_id:
           type: string
         artifact_source:
           type: string
